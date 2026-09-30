@@ -99,6 +99,8 @@ button{font:inherit;cursor:pointer;color:inherit}
 .pip{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-family:var(--display);font-weight:900;font-size:.95rem}
 .pip.w{background:var(--a-soft);color:var(--a);box-shadow:inset 0 0 0 1.5px var(--a)}
 .pip.h{background:var(--b-soft);color:var(--b);box-shadow:inset 0 0 0 1.5px var(--b)}
+.pip.d{background:rgba(255,255,255,.06);color:var(--muted);box-shadow:inset 0 0 0 1.5px var(--edge-2)}
+.fpip.D{background:rgba(255,255,255,.08);color:var(--muted)}
 .pip.none{background:var(--panel-2);box-shadow:inset 0 0 0 1px var(--edge)}
 .miniGrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .mini{background:rgba(255,255,255,.03);border:1px solid var(--edge);border-radius:10px;padding:10px 12px;min-width:0}
@@ -297,10 +299,6 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
   </nav>
 
   <div class="banner" id="status" hidden></div>
-  <div class="pubbar" id="pubbar" hidden>
-    <div><b id="pubCount">Changes not on the website yet</b><span id="pubHelp">They're saved in this browser only. Click <b>Save results.json</b>, save it into your squash-tracker folder (replace the old file), then double-click <b>Publish results.bat</b>.</span></div>
-    <div class="pubacts"><button class="btn ghost small" type="button" id="discard">Discard</button><button class="btn primary small" type="button" id="saveFile">Save results.json</button></div>
-  </div>
 
   <div>
     <div class="picker" role="group" aria-label="Choose a rivalry">
@@ -390,7 +388,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     <div class="feed" id="feed"></div>
   </section>
 
-  <footer>Scores follow PAR scoring: games to 11, win by 2 from 10–10. <span id="pubInfo"></span></footer>
+  <footer>Scores follow PAR scoring: games to 11, win by 2 from 10–10.</footer>
 </div>
 
 <!-- Log match sheet -->
@@ -411,6 +409,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
         <div class="seg" role="group" aria-label="Match format">
           <button type="button" id="fmt3" aria-pressed="false">Best of 3</button>
           <button type="button" id="fmt5" aria-pressed="true">Best of 5</button>
+          <button type="button" id="fmt4" aria-pressed="false" title="Play all 4 games. 2–2 counts as a draw.">4 games</button>
         </div>
       </div>
     </div>
@@ -449,6 +448,9 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
 </div>
 <div class="toast" id="toast" role="status" hidden></div>
 
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 <script>
 /* Squash rally scene: window.SquashScene = { mount(canvas, opts), celebrate(side) } */
 (function () {
@@ -890,81 +892,10 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
 (function(){
   const $ = id => document.getElementById(id);
 
-  // ---------- storage: results.json in the GitHub repo, plus unpublished edits kept in this browser ----------
-  const LocalDB = (() => {
-    const KEY = "sq.draft.v1";
-    let state = { updatedAt:"", players:{}, matches:{} }, published = "", subs = { players:[], matches:[] };
-    const read = k => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch(_) { return null; } };
-    const write = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, JSON.stringify(v)); } catch(_) {} };
-    const toMaps = j => {
-      const out = { updatedAt: (j && j.updatedAt) || "", players:{}, matches:{} };
-      ((j && Array.isArray(j.players)) ? j.players : []).forEach(p => { if (p && p.id){ const { id, ...rest } = p; out.players[id] = rest; } });
-      ((j && Array.isArray(j.matches)) ? j.matches : []).forEach(m => { if (m && m.id){ const { id, ...rest } = m; out.matches[id] = rest; } });
-      return out;
-    };
-    const toJSON = () => ({
-      updatedAt: state.updatedAt,
-      players: Object.entries(state.players).map(([id, v]) => ({ id, ...v })).sort((a,b) => (a.createdAt||0)-(b.createdAt||0)),
-      matches: Object.entries(state.matches).map(([id, v]) => ({ id, ...v })).sort((a,b) => a.date < b.date ? -1 : a.date > b.date ? 1 : (a.createdAt||0)-(b.createdAt||0))
-    });
-    const snap = c => { const docs = Object.entries(state[c]).map(([id, v]) => ({ id, data: () => v })); return { docs, empty: !docs.length, metadata:{ fromCache:false } }; };
-    const emit = c => subs[c].forEach(f => { try { f(snap(c)); } catch(_) {} });
-    const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    function changed(c){ state.updatedAt = new Date().toISOString(); write(KEY, toJSON()); emit(c); api.onChange(); }
-    const api = {
-      onChange(){},
-      toJSON,
-      dirty(){ return JSON.stringify(toJSON()) !== published; },
-      async open(){
-        let pub = null;
-        try { const r = await fetch("results.json?t=" + Date.now(), { cache:"no-store" }); if (!r.ok) throw new Error(r.status); pub = await r.json(); }
-        catch(_){
-          const b = $("status"); b.hidden = false;
-          if (location.protocol === "file:"){ b.textContent = "Open the website address (…github.io/squash-tracker) rather than the file on your computer. Browsers won't read results.json from a local file."; return null; }
-          b.textContent = "Couldn't load results.json. Reload the page to try again."; return null;
-        }
-        state = toMaps(pub); published = JSON.stringify(toJSON());
-        const draft = read(KEY);
-        if (draft && draft.updatedAt && (!pub.updatedAt || draft.updatedAt > pub.updatedAt)) state = toMaps(draft);
-        else if (draft) write(KEY, null);   // the website has caught up, so the browser copy is no longer needed
-        return api;
-      },
-      discard(){ write(KEY, null); state = toMaps(JSON.parse(published)); emit("players"); emit("matches"); api.onChange(); },
-      collection(c){ return {
-        onSnapshot(f){ subs[c].push(f); setTimeout(() => f(snap(c)), 0); return () => { subs[c] = subs[c].filter(x => x !== f); }; },
-        async add(d){ state[c][newId()] = JSON.parse(JSON.stringify(d)); changed(c); },
-        doc(id){ return { async set(d){ state[c][id] = JSON.parse(JSON.stringify(d)); changed(c); }, async delete(){ delete state[c][id]; changed(c); } }; }
-      }; }
-    };
-    return api;
-  })();
-
-  async function saveResultsFile(){
-    const text = JSON.stringify(LocalDB.toJSON(), null, 2) + "\n";
-    if (window.showSaveFilePicker){
-      try {
-        const h = await window.showSaveFilePicker({ suggestedName:"results.json", types:[{ description:"Squash results", accept:{ "application/json":[".json"] } }] });
-        const w = await h.createWritable(); await w.write(text); await w.close();
-        toast("Saved. Now double-click Publish results.bat in the squash-tracker folder."); return;
-      } catch(e){ if (e && e.name === "AbortError") return; }
-    }
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([text], { type:"application/json" })); a.download = "results.json";
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    toast("Downloaded results.json. Move it into the squash-tracker folder (replace the old one), then run Publish results.bat.");
-  }
-  let confirmingDiscard = false;
-  function startDiscard(){ confirmingDiscard = true; $("pubCount").textContent = "Throw away the changes that aren't on the website yet?"; $("discard").className = "btn danger small"; $("saveFile").textContent = "Keep them"; $("saveFile").className = "btn ghost small"; }
-  function endDiscard(){ confirmingDiscard = false; $("pubCount").textContent = "Changes not on the website yet"; $("discard").className = "btn ghost small"; $("saveFile").textContent = "Save results.json"; $("saveFile").className = "btn primary small"; }
-  function updatePubBar(){
-    $("pubbar").hidden = !(db && LocalDB.dirty());
-    const u = LocalDB.toJSON().updatedAt;
-    $("pubInfo").textContent = u ? `Last change ${fmtDate(u.slice(0,10))}.` : "";
-  }
   const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const PALETTE = ["#4EA8FF","#FFB02E","#3DDC97","#FF6FAE","#A78BFA","#FF7A59","#22D3EE","#B5E655"];
   let players = {}, playerList = [], matches = [], db = null, colM = null, colP = null;
-  let A = null, B = null, range = "all", feedMode = "all", format = 5;
+  let A = null, B = null, range = "all", feedMode = "all", format = 5, mode = "bestof";
   let editingId = null, pendingDelete = null, editPlayer = null, removePlayer = null, newColor = PALETTE[2];
   let sceneKey = "";
 
@@ -998,36 +929,38 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     if (hi < 11) return false;
     return hi === 11 ? lo <= 9 : hi - lo === 2;
   }
-  function result(m){ let w=0,h=0; m.games.forEach(g => g.w > g.h ? w++ : h++); return { w, h, win: w > h ? "w" : "h" }; }
+  function result(m){ let w=0,h=0; m.games.forEach(g => g.w > g.h ? w++ : h++); return { w, h, win: w > h ? "w" : w < h ? "h" : "d" }; }
+  const fmtLabel = m => m.mode === "fixed" ? `${m.format} games` : `best of ${m.format}`;
   const sortAsc = list => [...list].sort((a,b) => a.date === b.date ? (a.createdAt||0)-(b.createdAt||0) : (a.date < b.date ? -1 : 1));
   // oriented copy of a stored match: w = score of `me`, h = score of opponent
   const orient = (m, me) => ({ ...m, games: m.games.map(g => m.p1 === me ? { w:g.a, h:g.b } : { w:g.b, h:g.a }) });
-  const winnerOf = m => { let a=0,b=0; m.games.forEach(g => g.a > g.b ? a++ : b++); return a > b ? m.p1 : m.p2; };
+  const winnerOf = m => { let a=0,b=0; m.games.forEach(g => g.a > g.b ? a++ : b++); return a > b ? m.p1 : a < b ? m.p2 : null; };
   const pairList = () => sortAsc(matches.filter(m => (m.p1 === A && m.p2 === B) || (m.p1 === B && m.p2 === A))).map(m => orient(m, A));
 
   // ---------- ratings ----------
   function ladder(){
     const r = {};
-    playerList.forEach(p => r[p.id] = { p, elo:1500, prev:1500, w:0, l:0, n:0, form:[], streak:{t:null,n:0} });
+    playerList.forEach(p => r[p.id] = { p, elo:1500, prev:1500, w:0, d:0, l:0, n:0, form:[], streak:{t:null,n:0} });
     sortAsc(matches).forEach(m => {
       const a = r[m.p1], b = r[m.p2]; if (!a || !b) return;
-      const aWin = winnerOf(m) === m.p1;
-      const exp = 1/(1+Math.pow(10,(b.elo-a.elo)/400)), d = 32*((aWin?1:0)-exp);
+      const wid = winnerOf(m), sa = wid === null ? 0.5 : wid === m.p1 ? 1 : 0;
+      const exp = 1/(1+Math.pow(10,(b.elo-a.elo)/400)), d = 32*(sa-exp);
       a.prev = a.elo; b.prev = b.elo; a.elo += d; b.elo -= d;
-      [[a,aWin],[b,!aWin]].forEach(([x,won]) => {
-        x.n++; won ? x.w++ : x.l++; x.form.push(won ? "W" : "L");
-        const t = won ? "W" : "L"; x.streak = x.streak.t === t ? { t, n:x.streak.n+1 } : { t, n:1 };
+      [[a,sa],[b,1-sa]].forEach(([x,sc]) => {
+        const t = sc === 1 ? "W" : sc === 0 ? "L" : "D";
+        x.n++; t === "W" ? x.w++ : t === "L" ? x.l++ : x.d++; x.form.push(t);
+        x.streak = x.streak.t === t ? { t, n:x.streak.n+1 } : { t, n:1 };
       });
     });
     return Object.values(r).sort((x,y) => (y.n>0) - (x.n>0) || y.elo - x.elo || x.p.name.localeCompare(y.p.name));
   }
   function pairElo(list){
     let w = 1500, h = 1500; const hist = [];
-    list.forEach(m => { const r = result(m), exp = 1/(1+Math.pow(10,(h-w)/400)), d = 32*((r.win==="w"?1:0)-exp); w += d; h -= d; hist.push({ m, gap:w-h, win:r.win }); });
+    list.forEach(m => { const r = result(m), exp = 1/(1+Math.pow(10,(h-w)/400)), d = 32*((r.win==="w"?1:r.win==="d"?0.5:0)-exp); w += d; h -= d; hist.push({ m, gap:w-h, win:r.win }); });
     return { hist };
   }
   function stats(list){
-    const s = { n:list.length, m:{w:0,h:0}, g:{w:0,h:0}, p:{w:0,h:0}, tb:{w:0,h:0}, dec:{w:0,h:0}, cb:{w:0,h:0}, ww:{w:0,h:0},
+    const s = { n:list.length, m:{w:0,h:0,d:0}, g:{w:0,h:0}, p:{w:0,h:0}, tb:{w:0,h:0}, dec:{w:0,h:0}, cb:{w:0,h:0}, ww:{w:0,h:0},
       best:{w:0,h:0}, g1:{w:0,h:0}, margin:{w:0,h:0}, gwc:{w:0,h:0}, run:{who:null,n:0}, biggest:null, longest:null, closest:null, bestRun:null };
     let run = { who:null, n:0, start:null };
     list.forEach(m => {
@@ -1042,7 +975,8 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
       });
       s.p.w += pw; s.p.h += ph;
       const g1 = m.games[0].w > m.games[0].h ? "w" : "h"; s.g1[g1]++;
-      if (m.games.length === m.format) s.dec[win]++;
+      if (win === "d"){ run = { who:null, n:0, start:null }; return; }
+      if (m.mode !== "fixed" && m.games.length === m.format) s.dec[win]++;
       if (g1 !== win) s.cb[win]++;
       if (Math.min(r.w,r.h) === 0) s.ww[win]++;
       const diff = Math.abs(pw-ph);
@@ -1122,7 +1056,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
       const last = list[list.length-1], lr = result(last), lead = S.m.w - S.m.h;
       $("headline").innerHTML = lead === 0 ? `Dead level at <span class="num">${S.m.w}–${S.m.h}</span>`
         : `<span class="${lead>0?"cw":"ch"}">${lead>0?who("w"):who("h")}</span> leads <span class="num">${Math.max(S.m.w,S.m.h)}–${Math.min(S.m.w,S.m.h)}</span>`;
-      $("subline").innerHTML = `Last time out, <b class="${cls(lr.win)}">${who(lr.win)}</b> won ${Math.max(lr.w,lr.h)}–${Math.min(lr.w,lr.h)} on ${fmtDate(last.date)}. ` +
+      $("subline").innerHTML = (lr.win === "d" ? `Last time out it finished level, ${lr.w}–${lr.h} in games, on ${fmtDate(last.date)}. ` : `Last time out, <b class="${cls(lr.win)}">${who(lr.win)}</b> won ${Math.max(lr.w,lr.h)}–${Math.min(lr.w,lr.h)} on ${fmtDate(last.date)}. `) + (S.m.d ? `${S.m.d} draw${S.m.d===1?"":"s"} so far. ` : "") +
         (S.run.n >= 2 ? `That's <b>${S.run.n} in a row</b> in this rivalry.` : `The streak is on the line next time.`);
     }
     if (A && B){
@@ -1135,11 +1069,11 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     if (S.n){
       const last = list[list.length-1];
       $("mGames").innerHTML = `<span class="cw">${S.g.w}</span><span style="color:var(--faint)">–</span><span class="ch">${S.g.h}</span>`;
-      $("mStreak").innerHTML = `<span class="${cls(S.run.who)}">${esc((S.run.who==="w"?pname(A):pname(B)).charAt(0).toUpperCase())}${S.run.n}</span>`;
+      $("mStreak").innerHTML = !S.run.who ? "–" : `<span class="${cls(S.run.who)}">${esc((S.run.who==="w"?pname(A):pname(B)).charAt(0).toUpperCase())}${S.run.n}</span>`;
       const [,mm,dd] = last.date.split("-"); $("mLast").textContent = `${dd}/${mm}`;
     } else { $("mGames").textContent = "–"; $("mStreak").textContent = "–"; $("mLast").textContent = "–"; }
     const ia = esc(pname(A).charAt(0).toUpperCase()), ib = esc(pname(B).charAt(0).toUpperCase());
-    const f10 = list.slice(-10).map(m => { const w = result(m).win; return `<span class="pip ${w}" title="${fmtDate(m.date)}: ${who(w)}">${w==="w"?ia:ib}</span>`; });
+    const f10 = list.slice(-10).map(m => { const w = result(m).win; return w === "d" ? `<span class="pip d" title="${fmtDate(m.date)}: draw">D</span>` : `<span class="pip ${w}" title="${fmtDate(m.date)}: ${who(w)}">${w==="w"?ia:ib}</span>`; });
     while (f10.length < 10) f10.push(`<span class="pip none" aria-hidden="true"></span>`);
     $("form").innerHTML = f10.join("");
   }
@@ -1157,8 +1091,8 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
         <span class="rk num">${rated ? rank : "–"}</span>
         <span class="pl"><i class="dotc" style="background:${esc(x.p.color)}"></i><span>${esc(x.p.name)}</span></span>
         <span class="rt num">${Math.round(x.elo)}${rated && ch ? `<small class="${ch>0?"up":"dn"}">${ch>0?"▲":"▼"}${Math.abs(ch)}</small>` : ""}</span>
-        <span class="num">${x.w}–${x.l}</span>
-        <span class="num c-pct muted">${x.n ? Math.round(100*x.w/x.n)+"%" : "–"}</span>
+        <span class="num">${x.w}–${x.l}${x.d ? `<small class="muted" style="margin-left:5px">${x.d}D</small>` : ""}</span>
+        <span class="num c-pct muted">${x.n ? Math.round(100*(x.w+0.5*x.d)/x.n)+"%" : "–"}</span>
         <span class="c-form">${f}</span>
         <span class="num c-str ${x.streak.t==="W"?"up":x.streak.t==="L"?"dn":"muted"}">${x.streak.t ? x.streak.t + x.streak.n : "–"}</span>
       </div>`;
@@ -1170,7 +1104,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     if (range === "year"){ list = all.filter(m => m.date.slice(0,4) === year); label = year; }
     if (range === "last10"){ list = all.slice(-10); label = "Last 10 matches"; }
     const s = stats(list);
-    $("period").textContent = s.n ? `${label}: ${s.n} match${s.n===1?"":"es"}, ${fmtDate(list[0].date)} to ${fmtDate(list[s.n-1].date)}.` : `${label}: no head-to-head matches yet.`;
+    $("period").textContent = s.n ? `${label}: ${s.n} match${s.n===1?"":"es"}${s.m.d ? ` (${s.m.d} drawn)` : ""}, ${fmtDate(list[0].date)} to ${fmtDate(list[s.n-1].date)}.` : `${label}: no head-to-head matches yet.`;
     const pct = (a,b) => (a+b) ? Math.round(100*a/(a+b)) : 0;
     const avg = k => s.gwc[k] ? (s.margin[k]/s.gwc[k]).toFixed(1) : "–";
     const pp = pct(s.p.w,s.p.h), pq = (s.p.w+s.p.h) ? 100-pp : 0;
@@ -1206,7 +1140,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     const area = `${d}L${x(pts.length-1).toFixed(1)},${y(0)}L${x(0)},${y(0)}Z`;
     const grid = [lim, lim/2, 0, -lim/2, -lim].map(t => `<line x1="${L}" x2="${W-R}" y1="${y(t)}" y2="${y(t)}" stroke="${t===0?"rgba(255,255,255,.28)":"rgba(255,255,255,.07)"}" stroke-width="1" ${t===0?"":'stroke-dasharray="2 5"'}/><text x="${L-10}" y="${y(t)+4}" text-anchor="end" font-size="11" fill="#8E99B3" font-family="JetBrains Mono,monospace">${t>0?"+"+t:t}</text>`).join("");
     const lp = pts[pts.length-1];
-    const dots = pts.slice(1).map((p,i) => `<circle cx="${x(i+1)}" cy="${y(p.gap)}" r="${i===pts.length-2?5.5:3}" fill="${p.win==="w"?ca:cb}" stroke="#111932" stroke-width="2"><title>${fmtDate(p.m.date)}: ${who(p.win)} won. Gap ${p.gap>0?"+":""}${Math.round(p.gap)}</title></circle>`).join("");
+    const dots = pts.slice(1).map((p,i) => `<circle cx="${x(i+1)}" cy="${y(p.gap)}" r="${i===pts.length-2?5.5:3}" fill="${p.win==="w"?ca:p.win==="h"?cb:"#8E99B3"}" stroke="#111932" stroke-width="2"><title>${fmtDate(p.m.date)}: ${p.win==="d"?"Draw":who(p.win)+" won"}. Gap ${p.gap>0?"+":""}${Math.round(p.gap)}</title></circle>`).join("");
     const ly = Math.max(T+12, Math.min(H-Bm-8, y(lp.gap) + (lp.gap >= 0 ? -12 : 20)));
     el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Head-to-head rating gap over time">
       <defs>
@@ -1236,6 +1170,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     const rec = (icon, t, d, v) => `<div class="rec"><div class="ic">${ICONS[icon]}</div><div style="min-width:0"><div class="t">${t}</div><div class="d">${d}</div></div><div class="v num">${v}</div></div>`;
     if (!S.n){ $("records").innerHTML = `<div class="empty"><strong>Nothing in the book yet</strong><span>Biggest wins, longest games and hot streaks for this rivalry land here.</span></div>`; return; }
     const b = S.biggest, l = S.longest, c = S.closest, r = S.bestRun;
+    if (!b){ $("records").innerHTML = `<div class="empty"><strong>All square so far</strong><span>Every match has been drawn. Records appear once someone wins one.</span></div>`; return; }
     $("records").innerHTML = [
       rec("bolt","Biggest win",`${who(b.win)} ${Math.max(b.r.w,b.r.h)}–${Math.min(b.r.w,b.r.h)}, ${fmtDate(b.m.date)}`,`<span class="${cls(b.win)}">+${b.diff}</span>`),
       rec("clock","Longest game",`${who(l.win)} took it, ${fmtDate(l.m.date)}`,`${Math.max(l.g.w,l.g.h)}–${Math.min(l.g.w,l.g.h)}`),
@@ -1253,20 +1188,21 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
       return;
     }
     $("feed").innerHTML = list.map(m => {
-      const wid = winnerOf(m), lid = wid === m.p1 ? m.p2 : m.p1, o = orient(m, wid), r = result(o), [y,mo,dd] = m.date.split("-");
+      const draw = winnerOf(m) === null, wid = draw ? m.p1 : winnerOf(m), lid = wid === m.p1 ? m.p2 : m.p1, o = orient(m, wid), r = result(o), [y,mo,dd] = m.date.split("-");
       const games = o.games.map(g => `<span class="g pc" style="--gc:${esc(pcol(g.w>g.h?wid:lid))}"><span class="${g.w>g.h?"wv":"x"}">${g.w}</span><span class="x">–</span><span class="${g.h>g.w?"wv":"x"}">${g.h}</span></span>`).join("");
       const tags = [];
-      if (r.h === 0) tags.push("Whitewash");
-      if (m.games.length === m.format) tags.push("Decider");
-      if (o.games[0].w < o.games[0].h) tags.push("Comeback");
+      if (draw) tags.push("Draw");
+      if (!draw && r.h === 0) tags.push("Whitewash");
+      if (!draw && m.mode !== "fixed" && m.games.length === m.format) tags.push("Decider");
+      if (!draw && o.games[0].w < o.games[0].h) tags.push("Comeback");
       if (m.games.some(g => Math.min(g.a,g.b) >= 10)) tags.push("Tiebreak");
       const acts = !db ? "" : pendingDelete === m.id
         ? `<span style="font-size:.8rem;color:var(--muted)">Delete this result?</span><button class="btn danger small" type="button" data-yes="${m.id}">Delete</button><button class="btn ghost small" type="button" data-no>Keep</button>`
         : `<button class="btn ghost small" type="button" data-edit="${m.id}">Edit</button><button class="btn ghost small" type="button" data-del="${m.id}" aria-label="Delete result from ${fmtDate(m.date)}">Delete</button>`;
-      return `<article class="res" style="--pc:${esc(pcol(wid))}">
+      return `<article class="res" style="--pc:${draw ? "#8E99B3" : esc(pcol(wid))}">
         <div class="when"><span class="dd num">${dd}</span><span class="mm">${MONTHS[+mo-1]} ${y}</span></div>
         <div class="body">
-          <div class="ttl"><span class="win-name" style="color:${esc(pcol(wid))}">${esc(pname(wid))}</span> beat <span style="color:${esc(pcol(lid))};font-weight:700">${esc(pname(lid))}</span><span class="sc num">${r.w}–${r.h}</span><span class="fmt">best of ${m.format}</span></div>
+          <div class="ttl"><span class="win-name" style="color:${esc(pcol(wid))}">${esc(pname(wid))}</span> ${draw ? "drew with" : "beat"} <span style="color:${esc(pcol(lid))};font-weight:700">${esc(pname(lid))}</span><span class="sc num">${r.w}–${r.h}</span><span class="fmt">${fmtLabel(m)}</span></div>
           <div class="gs">${games}</div>
           ${tags.length ? `<div class="tags">${tags.map(t => `<span class="tag">${t}</span>`).join("")}</div>` : ""}
           ${m.note ? `<div class="note">${esc(m.note)}</div>` : ""}
@@ -1305,7 +1241,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     sheetColors(); check();
   }
   function check(){
-    const need = format === 3 ? 2 : 3;
+    const fixed = mode === "fixed", need = fixed ? Infinity : Math.floor(format/2) + 1;
     let w = 0, h = 0, done = false, err = "";
     const games = [];
     for (let i = 0; i < format; i++){
@@ -1325,18 +1261,19 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
       games.push({ a, b });
       const gw = a > b ? "w" : "h"; gw === "w" ? w++ : h++;
       row.classList.add("done-"+gw, "won-"+gw);
-      if (w === need || h === need) done = true;
+      if (w === need || h === need || (fixed && games.length === format)) done = true;
     }
     const msg = $("fMsg");
     if (fA === fB){ msg.className = "msg err"; msg.textContent = "Pick two different players."; $("save").disabled = true; return null; }
     if (err){ msg.className = "msg err"; msg.textContent = err; }
-    else if (done){ msg.className = "msg ok"; msg.textContent = `${w>h?pname(fA):pname(fB)} wins ${Math.max(w,h)}–${Math.min(w,h)}. Ready to save.`; }
+    else if (done){ msg.className = "msg ok"; msg.textContent = w === h ? `All square at ${w}–${h}. Saves as a draw.` : `${w>h?pname(fA):pname(fB)} wins ${Math.max(w,h)}–${Math.min(w,h)}. Ready to save.`; }
+    else if (fixed){ msg.className = "msg"; msg.textContent = games.length ? `Games: ${pname(fA)} ${w}, ${pname(fB)} ${h}. Enter all ${format} games.` : `Enter all ${format} games. Most games wins; 2–2 is a draw.`; }
     else { msg.className = "msg"; msg.textContent = games.length ? `Games: ${pname(fA)} ${w}, ${pname(fB)} ${h}. First to ${need} takes the match.` : `Enter each game's score. First to ${need} games wins.`; }
     const ok = done && !err;
     $("save").disabled = !ok || !db;
     return ok ? games : null;
   }
-  function setFormat(n, prefill){ format = n; $("fmt3").setAttribute("aria-pressed", n===3); $("fmt5").setAttribute("aria-pressed", n===5); buildBoard(prefill); }
+  function setFormat(n, prefill, md){ format = n; mode = md || "bestof"; $("fmt3").setAttribute("aria-pressed", mode==="bestof" && n===3); $("fmt5").setAttribute("aria-pressed", mode==="bestof" && n===5); $("fmt4").setAttribute("aria-pressed", mode==="fixed"); buildBoard(prefill); }
   function openSheet(m){
     if (playerList.length < 2) return openPlayers();
     editingId = m ? m.id : null;
@@ -1347,7 +1284,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     $("save").textContent = m ? "Save changes" : "Save result";
     $("fDate").value = m ? m.date : todayISO();
     $("fNote").value = m ? (m.note || "") : "";
-    setFormat(m ? m.format : format, m ? m.games.map(g => ({ w:g.a, h:g.b })) : null);
+    setFormat(m ? m.format : format, m ? m.games.map(g => ({ w:g.a, h:g.b })) : null, m ? m.mode : mode);
     $("scrim").hidden = false; document.body.style.overflow = "hidden";
     setTimeout(() => { const f = $("gw0"); f && f.focus(); }, 30);
   }
@@ -1360,7 +1297,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
   }
   async function save(){
     const games = check(); if (!games || !db) return;
-    const data = { date: $("fDate").value || todayISO(), format, p1: fA, p2: fB, games, note: $("fNote").value.trim().slice(0,200) };
+    const data = { date: $("fDate").value || todayISO(), format, mode, p1: fA, p2: fB, games, note: $("fNote").value.trim().slice(0,200) };
     const btn = $("save"); btn.disabled = true; btn.textContent = "Saving…";
     try {
       if (editingId){
@@ -1370,9 +1307,9 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
       } else {
         await colM.add({ ...data, createdAt: Date.now() });
         const wid = winnerOf(data), a = games.filter(g => g.a > g.b).length, b = games.length - a;
-        toast(`${pname(wid)} takes it ${Math.max(a,b)}–${Math.min(a,b)}. Saved.`);
+        toast(wid === null ? `Honours even at ${a}–${b}. Saved as a draw.` : `${pname(wid)} takes it ${Math.max(a,b)}–${Math.min(a,b)}. Saved.`);
         const inPair = (fA === A && fB === B) || (fA === B && fB === A);
-        if (inPair && window.SquashScene) window.SquashScene.celebrate(wid === A ? "w" : "h");
+        if (inPair && wid !== null && window.SquashScene) window.SquashScene.celebrate(wid === A ? "w" : "h");
       }
       closeSheet();
     } catch(e){
@@ -1436,6 +1373,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
   document.addEventListener("keydown", e => { if (e.key === "Escape"){ if (!$("scrim").hidden) closeSheet(); if (!$("pscrim").hidden) closePlayers(); } });
   $("fmt3").addEventListener("click", () => setFormat(3));
   $("fmt5").addEventListener("click", () => setFormat(5));
+  $("fmt4").addEventListener("click", () => setFormat(4, null, "fixed"));
   $("fA").addEventListener("change", onPlayerChange);
   $("fB").addEventListener("change", onPlayerChange);
   $("save").addEventListener("click", save);
@@ -1508,19 +1446,39 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     const p1 = d.p1 || "will", p2 = d.p2 || "henry";
     const games = d.games.map(g => ({ a: Number(g.a ?? g.w), b: Number(g.b ?? g.h) }));
     if (games.some(g => !Number.isFinite(g.a) || !Number.isFinite(g.b))) return null;
-    return { id, date:d.date, format: d.format === 3 ? 3 : 5, p1, p2, games, note: typeof d.note === "string" ? d.note : "", createdAt: d.createdAt || 0 };
+    return { id, date:d.date, format: d.mode === "fixed" ? Math.min(7, Math.max(1, parseInt(d.format,10) || 4)) : (d.format === 3 ? 3 : 5), mode: d.mode === "fixed" ? "fixed" : "bestof", p1, p2, games, note: typeof d.note === "string" ? d.note : "", createdAt: d.createdAt || 0 };
+  }
+
+  // Earlier versions kept unsaved results in this browser. Copy any of those online once, then forget them.
+  async function moveBrowserResultsOnline(){
+    let draft = null; try { draft = JSON.parse(localStorage.getItem("sq.draft.v1") || "null"); } catch(_) {}
+    const [ps, ms] = await Promise.all([colP.get(), colM.get()]);
+    const haveP = new Set(ps.docs.map(d => d.id)), haveM = new Set(ms.docs.map(d => d.id));
+    const batch = db.batch(); let np = 0, nm = 0;
+    const seed = [{ id:"will", name:"Will", color:"#4EA8FF", createdAt:1 }, { id:"henry", name:"Henry", color:"#FFB02E", createdAt:2 }];
+    const plist = (draft && Array.isArray(draft.players) && draft.players.length) ? draft.players : (ps.empty ? seed : []);
+    plist.forEach(p => { if (p && p.id && p.name && !haveP.has(p.id)){ batch.set(colP.doc(p.id), { name:String(p.name).slice(0,24), color:/^#[0-9a-f]{6}$/i.test(p.color||"") ? p.color : PALETTE[0], createdAt:p.createdAt || Date.now() }); np++; } });
+    ((draft && Array.isArray(draft.matches)) ? draft.matches : []).forEach(m => {
+      if (!m || !m.id || haveM.has(m.id) || !normMatch(m.id, m)) return;
+      const n = normMatch(m.id, m);
+      const doc = { date:n.date, format:n.format, mode:n.mode, p1:n.p1, p2:n.p2, games:n.games, note:n.note.slice(0,200), createdAt:n.createdAt || Date.now() };
+      batch.set(colM.doc(m.id), doc); nm++;
+    });
+    if (np || nm) await batch.commit();
+    if (nm) toast(`Moved ${nm} match${nm===1?"":"es"} from this browser online.`);
+    try { localStorage.removeItem("sq.draft.v1"); } catch(_) {}
   }
 
   render();
   (async () => {
-    db = await LocalDB.open();
-    if (!db){ render(); return; }
-    LocalDB.onChange = updatePubBar; updatePubBar();
-    $("saveFile").addEventListener("click", () => { if (!confirmingDiscard) saveResultsFile(); else endDiscard(); });
-    $("discard").addEventListener("click", () => { if (confirmingDiscard){ endDiscard(); LocalDB.discard(); toast("Changes discarded."); } else startDiscard(); });
+    const cfg = window.FIREBASE_CONFIG, st = $("status");
+    if (!window.firebase){ st.hidden = false; st.textContent = "Couldn't reach the results database. Check your internet connection and reload."; render(); return; }
+    if (!cfg || !cfg.projectId || String(cfg.apiKey || "").startsWith("PASTE")){ st.hidden = false; st.textContent = "The database isn't connected yet: firebase-config.js still needs its settings."; render(); return; }
+    try { if (!firebase.apps.length) firebase.initializeApp(cfg); db = firebase.firestore(); }
+    catch(_){ st.hidden = false; st.textContent = "The settings in firebase-config.js look wrong."; render(); return; }
     colM = db.collection("matches"); colP = db.collection("players");
+    try { await moveBrowserResultsOnline(); } catch(_) {}
     const lost = (e) => { if (e && /permission/.test(e.code||"")){ const b = $("status"); b.hidden = false; b.textContent = "The database refused access. Publish the Firestore rules from the setup guide, then reload."; return; } const b = $("status"); b.hidden = false; b.textContent = "Lost the live connection to results. Reload the page to reconnect."; };
-    let seeded = false;
     colP.onSnapshot(snap => {
       players = {};
       snap.docs.forEach(d => { const v = d.data(); if (v && typeof v.name === "string" && v.name.trim()) players[d.id] = { id:d.id, name:v.name.trim().slice(0,24), color: /^#[0-9a-f]{6}$/i.test(v.color||"") ? v.color : PALETTE[0], createdAt: v.createdAt || 0 }; });

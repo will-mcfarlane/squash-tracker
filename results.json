@@ -1,8 +1,0 @@
-{
-  "updatedAt": "2026-09-30T00:00:00.000Z",
-  "players": [
-    { "id": "will", "name": "Will", "color": "#4EA8FF", "createdAt": 1 },
-    { "id": "henry", "name": "Henry", "color": "#FFB02E", "createdAt": 2 }
-  ],
-  "matches": []
-}
