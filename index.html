@@ -298,7 +298,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
 
   <div class="banner" id="status" hidden></div>
   <div class="pubbar" id="pubbar" hidden>
-    <div><b id="pubCount">Changes not on the website yet</b><span id="pubHelp">They're saved in this browser only. Click <b>Save results.json</b>, save it into your squash-tracker folder (replace the old file), then commit and push it in <b>GitHub Desktop</b>.</span></div>
+    <div><b id="pubCount">Changes not on the website yet</b><span id="pubHelp">They're saved in this browser only. Click <b>Save results.json</b>, save it into your squash-tracker folder (replace the old file), then double-click <b>Publish results.bat</b>.</span></div>
     <div class="pubacts"><button class="btn ghost small" type="button" id="discard">Discard</button><button class="btn primary small" type="button" id="saveFile">Save results.json</button></div>
   </div>
 
@@ -945,13 +945,13 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
       try {
         const h = await window.showSaveFilePicker({ suggestedName:"results.json", types:[{ description:"Squash results", accept:{ "application/json":[".json"] } }] });
         const w = await h.createWritable(); await w.write(text); await w.close();
-        toast("Saved. Now commit and push in GitHub Desktop."); return;
+        toast("Saved. Now double-click Publish results.bat in the squash-tracker folder."); return;
       } catch(e){ if (e && e.name === "AbortError") return; }
     }
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([text], { type:"application/json" })); a.download = "results.json";
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    toast("Downloaded results.json. Move it into the squash-tracker folder (replace the old one), then commit and push in GitHub Desktop.");
+    toast("Downloaded results.json. Move it into the squash-tracker folder (replace the old one), then run Publish results.bat.");
   }
   let confirmingDiscard = false;
   function startDiscard(){ confirmingDiscard = true; $("pubCount").textContent = "Throw away the changes that aren't on the website yet?"; $("discard").className = "btn danger small"; $("saveFile").textContent = "Keep them"; $("saveFile").className = "btn ghost small"; }
