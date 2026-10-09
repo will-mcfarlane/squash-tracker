@@ -405,13 +405,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     </div>
     <div class="frow">
       <label class="f">Date<input type="date" id="fDate"></label>
-      <div class="f"><span>Format</span>
-        <div class="seg" role="group" aria-label="Match format">
-          <button type="button" id="fmt3" aria-pressed="false">Best of 3</button>
-          <button type="button" id="fmt5" aria-pressed="true">Best of 5</button>
-          <button type="button" id="fmt4" aria-pressed="false" title="Play all 4 games. 2–2 counts as a draw.">4 games</button>
-        </div>
-      </div>
+      <p class="f" style="margin:0;align-self:center;max-width:34ch;text-transform:none;letter-spacing:0;font-size:.85rem;font-weight:500">Enter however many games you played, 1 to 5. Most games wins; level is a draw.</p>
     </div>
     <div class="board" id="board">
       <div class="bhead"><span>Game</span><span class="cw" id="bA">–</span><span class="ch" id="bB">–</span></div>
@@ -930,7 +924,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     return hi === 11 ? lo <= 9 : hi - lo === 2;
   }
   function result(m){ let w=0,h=0; m.games.forEach(g => g.w > g.h ? w++ : h++); return { w, h, win: w > h ? "w" : w < h ? "h" : "d" }; }
-  const fmtLabel = m => m.mode === "fixed" ? `${m.format} games` : `best of ${m.format}`;
+  const fmtLabel = m => m.mode === "fixed" ? `${m.format} game${m.format===1?"":"s"}` : `best of ${m.format}`;
   const sortAsc = list => [...list].sort((a,b) => a.date === b.date ? (a.createdAt||0)-(b.createdAt||0) : (a.date < b.date ? -1 : 1));
   // oriented copy of a stored match: w = score of `me`, h = score of opponent
   const orient = (m, me) => ({ ...m, games: m.games.map(g => m.p1 === me ? { w:g.a, h:g.b } : { w:g.b, h:g.a }) });
@@ -1241,17 +1235,14 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     sheetColors(); check();
   }
   function check(){
-    const fixed = mode === "fixed", need = fixed ? Infinity : Math.floor(format/2) + 1;
-    let w = 0, h = 0, done = false, err = "";
+    let w = 0, h = 0, err = "";
     const games = [];
     for (let i = 0; i < format; i++){
       const row = document.querySelector(`.grow[data-i="${i}"]`);
       const av = $("gw"+i).value, bv = $("gh"+i).value;
       const a = av === "" ? null : Number(av), b = bv === "" ? null : Number(bv);
       row.className = "grow";
-      const empty = a === null && b === null;
-      if (done){ if (!empty){ row.classList.add("bad"); err = err || `The match was already won before game ${i+1}. Clear that row.`; } else row.classList.add("dim"); continue; }
-      if (empty) continue;
+      if (a === null && b === null) continue;
       if (games.length !== i){ row.classList.add("bad"); err = err || `Fill games in order. Game ${games.length+1} is empty.`; continue; }
       if (a === null || b === null || !validGame(a,b)){
         row.classList.add("bad");
@@ -1261,19 +1252,18 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
       games.push({ a, b });
       const gw = a > b ? "w" : "h"; gw === "w" ? w++ : h++;
       row.classList.add("done-"+gw, "won-"+gw);
-      if (w === need || h === need || (fixed && games.length === format)) done = true;
     }
+    const done = games.length > 0;
     const msg = $("fMsg");
     if (fA === fB){ msg.className = "msg err"; msg.textContent = "Pick two different players."; $("save").disabled = true; return null; }
     if (err){ msg.className = "msg err"; msg.textContent = err; }
-    else if (done){ msg.className = "msg ok"; msg.textContent = w === h ? `All square at ${w}–${h}. Saves as a draw.` : `${w>h?pname(fA):pname(fB)} wins ${Math.max(w,h)}–${Math.min(w,h)}. Ready to save.`; }
-    else if (fixed){ msg.className = "msg"; msg.textContent = games.length ? `Games: ${pname(fA)} ${w}, ${pname(fB)} ${h}. Enter all ${format} games.` : `Enter all ${format} games. Most games wins; 2–2 is a draw.`; }
-    else { msg.className = "msg"; msg.textContent = games.length ? `Games: ${pname(fA)} ${w}, ${pname(fB)} ${h}. First to ${need} takes the match.` : `Enter each game's score. First to ${need} games wins.`; }
+    else if (done){ msg.className = "msg ok"; msg.textContent = (w === h ? `Level at ${w}–${h}, so it saves as a draw.` : `${w>h?pname(fA):pname(fB)} wins ${Math.max(w,h)}–${Math.min(w,h)}.`) + ` Add more games or save.`; }
+    else { msg.className = "msg"; msg.textContent = `Enter the score of each game you played.`; }
     const ok = done && !err;
     $("save").disabled = !ok || !db;
     return ok ? games : null;
   }
-  function setFormat(n, prefill, md){ format = n; mode = md || "bestof"; $("fmt3").setAttribute("aria-pressed", mode==="bestof" && n===3); $("fmt5").setAttribute("aria-pressed", mode==="bestof" && n===5); $("fmt4").setAttribute("aria-pressed", mode==="fixed"); buildBoard(prefill); }
+  function setFormat(n, prefill){ format = 5; mode = "fixed"; buildBoard(prefill); }
   function openSheet(m){
     if (playerList.length < 2) return openPlayers();
     editingId = m ? m.id : null;
@@ -1284,7 +1274,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
     $("save").textContent = m ? "Save changes" : "Save result";
     $("fDate").value = m ? m.date : todayISO();
     $("fNote").value = m ? (m.note || "") : "";
-    setFormat(m ? m.format : format, m ? m.games.map(g => ({ w:g.a, h:g.b })) : null, m ? m.mode : mode);
+    setFormat(5, m ? m.games.map(g => ({ w:g.a, h:g.b })) : null);
     $("scrim").hidden = false; document.body.style.overflow = "hidden";
     setTimeout(() => { const f = $("gw0"); f && f.focus(); }, 30);
   }
@@ -1297,7 +1287,7 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
   }
   async function save(){
     const games = check(); if (!games || !db) return;
-    const data = { date: $("fDate").value || todayISO(), format, mode, p1: fA, p2: fB, games, note: $("fNote").value.trim().slice(0,200) };
+    const data = { date: $("fDate").value || todayISO(), format: games.length, mode: "fixed", p1: fA, p2: fB, games, note: $("fNote").value.trim().slice(0,200) };
     const btn = $("save"); btn.disabled = true; btn.textContent = "Saving…";
     try {
       if (editingId){
@@ -1371,9 +1361,6 @@ select{font:inherit;color:var(--ink);background:var(--night);border:1px solid va
   $("closePlayers").addEventListener("click", closePlayers);
   $("pscrim").addEventListener("click", e => { if (e.target === $("pscrim")) closePlayers(); });
   document.addEventListener("keydown", e => { if (e.key === "Escape"){ if (!$("scrim").hidden) closeSheet(); if (!$("pscrim").hidden) closePlayers(); } });
-  $("fmt3").addEventListener("click", () => setFormat(3));
-  $("fmt5").addEventListener("click", () => setFormat(5));
-  $("fmt4").addEventListener("click", () => setFormat(4, null, "fixed"));
   $("fA").addEventListener("change", onPlayerChange);
   $("fB").addEventListener("change", onPlayerChange);
   $("save").addEventListener("click", save);
